@@ -1,0 +1,157 @@
+# Copyright 2012 Omniscale (http://omniscale.com)
+# 
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# 
+#     http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import time
+import json
+
+import shapely
+
+import logging
+log = logging.getLogger(__name__)
+
+from imposm import config
+from imposm.mapping import Mapping
+
+from pymongo import MongoClient
+
+class MongoDB(object):
+    insert_data_format = 'tuple'
+
+    def __init__(self, db_conf):
+        self.db_conf = db_conf
+        self.srid = int(db_conf['proj'].split(':')[1])
+        self._insert_stmts = {}
+        self._connection = None
+
+    @property
+    def table_prefix(self):
+        return self.db_conf.prefix.rstrip('_') + '_'
+
+    def to_tablename(self, name):
+        return self.table_prefix + name.lower()
+
+    def is_postgis_2(self):
+        pass 
+
+    @property
+    def connection(self):
+        if not self._connection:
+            self.db_conf.port = int(self.db_conf.port)
+            # todo username / password
+            # todo ssl
+            # test = self.db_conf.user+":"+self.db_conf.password+"@"
+            mongo_client = MongoClient(self.db_conf.host, self.db_conf.port)
+            self._connection = mongo_client[self.db_conf.db]
+        return self._connection
+
+    def commit(self):
+        # There are not commits in MongoDB
+        pass
+
+    def insert(self, mapping, insert_data):
+        # insert_stmt = self.insert_stmt(mapping)
+        tablename = self.table_prefix + mapping.name
+        if mapping.fields:
+            extra_arg_names = ['osm_id', 'geometry']
+            extra_arg_names.extend([n for n, t in mapping.fields])
+        
+        insert_dict = []
+        for elem in  insert_data[0]:
+            insert_dict.append(elem)
+
+        dictionary = dict(zip(extra_arg_names, insert_dict))
+        self.connection[tablename].insert(dictionary)
+
+    def geom_wrapper(self, geom):
+        return shapely.geometry.mapping(geom)
+
+    def reconnect(self):
+        self._connection = None
+        self._cur = None
+
+    def post_insert(self, mappings):
+        mappings = [m for m in mappings if isinstance(m, (Mapping))]
+        for mapping in mappings:
+            tablename = self.to_tablename(mapping.name)
+            self.connection[tablename].ensure_index( { "locs": "2d" } )
+
+    def create_tables(self, mappings):
+        for mapping in mappings:
+            self.create_table(mapping)
+
+    def create_table(self, mapping):
+        tablename = self.to_tablename(mapping.name)
+        
+        # drop collection
+        self.connection[tablename].drop()
+
+        # # table in mongodb is collection
+        self.connection.create_collection(tablename)
+        # self.create_geometry_column(cur, tablename, mapping)
+        # self.create_field_indices(cur=cur, mapping=mapping, tablename=tablename)
+
+    def spatial_fun(self, mapping_names):
+        pass
+        # condition = []
+        # for name in mapping_names:
+        #     condition.append(
+        #         "(doc.mapping_names.indexOf('" + name + "') !== -1)")
+        # return ("function(doc) {if (doc.geometry && (" +
+        #         "||".join(condition) + ")) {"
+        #         "delete doc.mapping_names; emit(doc.geometry, doc);}}")
+
+    def swap_tables(self, new_prefix, existing_prefix, backup_prefix):
+        raise NotImplementedError()
+
+
+    def remove_tables(self, prefix):
+        collections = self.connection.collection_names()
+        for collection in collections:
+            if collection != 'system.indexes':
+                self.connection[collection].drop()
+
+    def remove_views(self, prefix):
+        # no views in mongodb
+        pass
+
+    def create_views(self, mappings, ignore_errors=False):
+        pass
+
+    def create_generalized_tables(self, mappings):
+        # no views in mongodb
+        pass
+
+    def postprocess_tables(self, mappings):
+        # mappings = [m for m in mappings.values() if isinstance(m, FixInvalidPolygons)]
+        # for mapping in mappings:
+        #     PostGISFixInvalidPolygons(self, mapping).update()
+        pass
+
+    def optimize(self, mappings):
+        # mappings = [m for m in mappings.values() if isinstance(m, (GeneralizedTable, Mapping))]
+        # for mapping in mappings:
+        #     table_name = self.to_tablename(mapping.name)
+        #     self.optimize_table(table_name, '%s_geom' % table_name)
+        # self.vacuum()
+        raise NotImplementedError()
+
+    def optimize_table(self, table_name, idx_name):
+        # cur = self.connection.cursor()
+        # print 'Clustering table %s' % table_name
+        # cur.execute('CLUSTER "%s" ON "%s"' % (idx_name, table_name))
+        # self.connection.commit()
+        raise NotImplementedError()
+
+    def vacuum(self):
+        raise NotImplementedError()

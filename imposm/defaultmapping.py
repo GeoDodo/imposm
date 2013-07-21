@@ -56,6 +56,7 @@ db_conf = Options(
     sslmode='allow',
     prefix='osm_new_',
     proj='epsg:900913',
+    name='postgis',
 )
 
 class Highway(LineStrings):

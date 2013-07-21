@@ -11,6 +11,7 @@ install_requires = [
     'imposm.parser',
     'psycopg2',
     'Shapely',
+    # 'pymongo', only used for mongodb
 ]
 
 if sys.version_info < (2, 6):

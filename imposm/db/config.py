@@ -23,6 +23,9 @@ def DB(db_conf):
     if db_conf.get('name', 'postgis') == 'postgis':
         # default and backwards compat
         return PostGISDB(db_conf)
+    if db_conf.get('name', 'mongodb') == 'mongodb':
+        from .mongodb import MongoDB
+        return MongoDB(db_conf)
     raise ValueError('unknown db: %s' % (db_conf.name,))
 
 def db_conf_from_string(conf, base_db_conf):
