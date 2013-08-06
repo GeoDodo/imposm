@@ -40,10 +40,11 @@ import imposm.mapping
 import imposm.util
 import imposm.version
 from imposm.writer import ImposmWriter
-from imposm.db.config import DB
+from imposm.db.config import DB, check_connection
 from imposm.cache import OSMCache
 from imposm.reader import ImposmReader
 from imposm.mapping import TagMapper
+from imposm.geom import load_geom
 
 try:
     n_cpu = multiprocessing.cpu_count()
@@ -125,9 +126,11 @@ def main(argv=None):
     parser.add_option('--remove-backup-tables', dest='remove_backup_tables', default=False,
         action='store_true')
 
-
     parser.add_option('-n', '--dry-run', dest='dry_run', default=False,
         action='store_true')
+
+    parser.add_option('--limit-to', dest='limit_to', metavar='file',
+        help='limit imported geometries to (multi)polygons in EPSG:4326')
 
     (options, args) = parser.parse_args(argv)
 
@@ -144,6 +147,13 @@ def main(argv=None):
         parser.print_help()
         sys.exit(1)
 
+    if options.quiet:
+        logger = imposm.util.QuietProgressLog
+        logger_parser = imposm.util.QuietParserProgress
+    else:
+        logger = imposm.util.ProgressLog
+        logger_parser = imposm.util.ParserProgress
+
     if options.proj:
         if ':' not in options.proj:
             print 'ERROR: --proj should be in EPSG:00000 format'
@@ -158,10 +168,20 @@ def main(argv=None):
         print 'loading %s as mapping' % options.mapping_file
         mapping_file = options.mapping_file
 
+    polygon = None
+    if options.limit_to:
+        logger.message('## reading --limit-to %s' % options.limit_to)
+        polygon_timer = imposm.util.Timer('reading', logger)
+        polygon = load_geom(options.limit_to)
+        polygon_timer.stop()
+        if polygon is None:
+            print 'ERROR: No valid polygon/multipolygon found'
+            sys.exit(1)
+
     mappings = {}
     execfile(mapping_file, mappings)
     tag_mapping = TagMapper([m for n, m in mappings.iteritems()
-        if isinstance(m, imposm.mapping.Mapping)])
+        if isinstance(m, imposm.mapping.Mapping)], limit_to=polygon)
 
     if 'IMPOSM_MULTIPOLYGON_REPORT' in os.environ:
         imposm.config.imposm_multipolygon_report = float(os.environ['IMPOSM_MULTIPOLYGON_REPORT'])
@@ -200,13 +220,6 @@ def main(argv=None):
         if options.proj:
             db_conf.proj = options.proj
 
-    if options.quiet:
-        logger = imposm.util.QuietProgressLog
-        logger_parser = imposm.util.QuietParserProgress
-    else:
-        logger = imposm.util.ProgressLog
-        logger_parser = imposm.util.ParserProgress
-
     imposm_timer = imposm.util.Timer('imposm', logger)
 
     if options.read:
@@ -216,7 +229,9 @@ def main(argv=None):
                 if not options.overwrite_cache:
                     print (
                         "ERROR: found existing cache files in '%s'. "
-                        'remove files or use --overwrite-cache or --merge-cache.'
+                        'Remove --read option to use the existing cache '
+                        'or use --overwrite-cache or --merge-cache to '
+                        'overwrite or merge it.'
                         % os.path.abspath(options.cache_dir)
                     )
                     sys.exit(2)
@@ -231,6 +246,12 @@ def main(argv=None):
         if not args:
             print "no file(s) supplied"
             sys.exit(2)
+
+        if options.write:
+            err = check_connection(db_conf)
+            if err:
+                logger.message("ERROR: unable to connect to database. Check your DB settings.\n{0}".format(err))
+                sys.exit(2)
 
         reader = ImposmReader(tag_mapping, cache=cache, merge=options.merge_cache,
             pool_size=options.concurrency, logger=logger_parser)
@@ -274,6 +295,16 @@ def main(argv=None):
             view_timer = imposm.util.Timer('creating views', logger)
             db.create_views(mappings)
             view_timer.stop()
+
+            logger.message('## creating geometry indexes')
+            index_timer = imposm.util.Timer('creating indexes', logger)
+            db.post_insert(mappings);
+            index_timer.stop()
+
+            logger.message('## post-processing tables')
+            valid_timer = imposm.util.Timer('post-processing tables', logger)
+            db.postprocess_tables(mappings)
+            valid_timer.stop()
 
             db.commit()
 

@@ -23,7 +23,7 @@ import logging
 log = logging.getLogger(__name__)
 
 from imposm import config
-from imposm.mapping import UnionView, GeneralizedTable, Mapping
+from imposm.mapping import UnionView, GeneralizedTable, FixInvalidPolygons, Mapping
 
 unknown = object()
 
@@ -123,6 +123,20 @@ class PostGISDB(object):
 
         self.connection.commit()
 
+    def post_insert(self, mappings):
+        mappings = [m for m in mappings.values() if isinstance(m, (GeneralizedTable, Mapping))]
+        for mapping in mappings:
+            table_name = self.to_tablename(mapping.name)
+            self.create_geom_index(table_name)
+
+    def create_geom_index(self, table_name):
+        idx_name = '%s_geom' % table_name
+        cur = self.connection.cursor()
+        cur.execute("""
+            CREATE INDEX "%s" ON "%s" USING GIST (geometry)
+        """ % (idx_name,table_name))
+        self.connection.commit()
+
     def geom_wrapper(self, geom):
         return psycopg2.Binary(geom.wkb)
 
@@ -192,9 +206,6 @@ class PostGISDB(object):
 
         self.create_field_indices(cur=cur, mapping=mapping, tablename=tablename)
 
-        cur.execute("""
-            CREATE INDEX "%(tablename)s_geom" ON "%(tablename)s" USING GIST (geometry)
-        """ % dict(tablename=tablename))
 
     def create_geometry_column(self, cur, tablename, mapping):
         if self.use_geometry_columns_table:
@@ -223,6 +234,10 @@ class PostGISDB(object):
     def swap_tables(self, new_prefix, existing_prefix, backup_prefix):
         cur = self.connection.cursor()
 
+        # remove views before tables, because remove_tables will also remove
+        # views via CASCADE and we need the view names for cleanup of
+        # geometry_columns
+        self.remove_views(backup_prefix)
         self.remove_tables(backup_prefix)
 
         cur.execute('SELECT tablename FROM pg_tables WHERE tablename like %s', (existing_prefix + '%', ))
@@ -232,6 +247,14 @@ class PostGISDB(object):
             if table_name.startswith(existing_prefix) and not table_name.startswith((new_prefix, backup_prefix)):
                 # check for overlapping prefixes: osm_ but not osm_new_ or osm_backup_
                 existing_tables.append(table_name)
+
+        cur.execute('SELECT viewname FROM pg_views WHERE viewname like %s', (existing_prefix + '%', ))
+        existing_views = []
+        for row in cur:
+            view_name = row[0]
+            if view_name.startswith(existing_prefix) and not view_name.startswith((new_prefix, backup_prefix)):
+                # check for overlapping prefixes: osm_ but not osm_new_ or osm_backup_
+                existing_views.append(view_name)
 
         cur.execute('SELECT indexname FROM pg_indexes WHERE indexname like %s', (existing_prefix + '%', ))
         existing_indexes = set()
@@ -255,6 +278,12 @@ class PostGISDB(object):
             table_name = row[0]
             new_tables.append(table_name)
 
+        cur.execute('SELECT viewname FROM pg_views WHERE viewname like %s', (new_prefix + '%', ))
+        new_views = []
+        for row in cur:
+            view_name = row[0]
+            new_views.append(view_name)
+
         cur.execute('SELECT indexname FROM pg_indexes WHERE indexname like %s', (new_prefix + '%', ))
         new_indexes = set()
         for row in cur:
@@ -277,7 +306,7 @@ class PostGISDB(object):
             cur.execute('ALTER TABLE "%s" RENAME TO "%s"' % (table_name, rename_to))
 
             for idx in existing_indexes:
-                if idx in (table_name + '_geom', table_name + '_pkey') or idx.startswith(table_name + '_trgm_idx_'):
+                if idx in (table_name + '_geom', table_name + '_pkey') or idx.startswith(table_name + '_trgm_idx_') or idx.startswith(table_name + '_idx_'):
                     new_idx = idx.replace(table_name, rename_to, 1)
                     cur.execute('ALTER INDEX "%s" RENAME TO "%s"' % (idx, new_idx))
             if table_name + '_id_seq' in existing_seq:
@@ -285,19 +314,36 @@ class PostGISDB(object):
             if self.use_geometry_columns_table:
                 cur.execute('UPDATE geometry_columns SET f_table_name = %s WHERE f_table_name = %s', (rename_to, table_name))
 
+        # rename existing views (osm_) to backup_prefix (osm_backup_)
+        for view_name in existing_views:
+            rename_to = view_name.replace(existing_prefix, backup_prefix)
+            cur.execute('ALTER VIEW "%s" RENAME TO "%s"' % (view_name, rename_to))
+
+            if self.use_geometry_columns_table:
+                cur.execute('UPDATE geometry_columns SET f_table_name = %s WHERE f_table_name = %s', (rename_to, view_name))
+
         # rename new tables (osm_new_) to existing_prefix (osm_)
         for table_name in new_tables:
             rename_to = table_name.replace(new_prefix, existing_prefix)
             cur.execute('ALTER TABLE "%s" RENAME TO "%s"' % (table_name, rename_to))
 
             for idx in new_indexes:
-                if idx in (table_name + '_geom', table_name + '_pkey') or idx.startswith(table_name + '_trgm_idx_'):
+                if idx in (table_name + '_geom', table_name + '_pkey') or idx.startswith(table_name + '_trgm_idx_') or idx.startswith(table_name + '_idx_'):
                     new_idx = idx.replace(table_name, rename_to, 1)
                     cur.execute('ALTER INDEX "%s" RENAME TO "%s"' % (idx, new_idx))
             if table_name + '_id_seq' in new_seq:
                 cur.execute('ALTER SEQUENCE "%s" RENAME TO "%s"' % (table_name + '_id_seq', rename_to + '_id_seq'))
             if self.use_geometry_columns_table:
                 cur.execute('UPDATE geometry_columns SET f_table_name = %s WHERE f_table_name = %s', (rename_to, table_name))
+
+        # rename new views (osm_new_) to existing_prefix (osm_)
+        for view_name in new_views:
+            rename_to = view_name.replace(new_prefix, existing_prefix)
+            cur.execute('ALTER VIEW "%s" RENAME TO "%s"' % (view_name, rename_to))
+
+            if self.use_geometry_columns_table:
+                cur.execute('UPDATE geometry_columns SET f_table_name = %s WHERE f_table_name = %s', (rename_to, view_name))
+
 
     def remove_tables(self, prefix):
         cur = self.connection.cursor()
@@ -330,6 +376,11 @@ class PostGISDB(object):
         mappings = [m for m in mappings.values() if isinstance(m, GeneralizedTable)]
         for mapping in sorted(mappings, key=lambda x: x.name, reverse=True):
             PostGISGeneralizedTable(self, mapping).create()
+
+    def postprocess_tables(self, mappings):
+        mappings = [m for m in mappings.values() if isinstance(m, FixInvalidPolygons)]
+        for mapping in mappings:
+            PostGISFixInvalidPolygons(self, mapping).update()
 
     def optimize(self, mappings):
         mappings = [m for m in mappings.values() if isinstance(m, (GeneralizedTable, Mapping))]
@@ -424,10 +475,6 @@ class PostGISGeneralizedTable(object):
         self.mapping = mapping
         self.table_name = db.to_tablename(mapping.name)
 
-    def _idx_stmt(self):
-        return 'CREATE INDEX "%s_geom" ON "%s" USING GIST (geometry)' % (
-            self.table_name, self.table_name)
-
     def _geom_table_stmt(self):
         assert self.db.use_geometry_columns_table
         stmt = "insert into geometry_columns values ('', 'public', '%s', 'geometry', 2, %d, 'GEOMETRY')" % (
@@ -438,10 +485,10 @@ class PostGISGeneralizedTable(object):
         fields = ', '.join([n for n, t in self.mapping.fields])
         if fields:
             fields += ','
+
+        where = ''
         if self.mapping.where:
-            where = ' WHERE ' + self.mapping.where
-        else:
-            where = ''
+            where = ' WHERE %s' % (self.mapping.where)
 
         if config.imposm_pg_serial_id:
             serial_column = "id, "
@@ -449,7 +496,7 @@ class PostGISGeneralizedTable(object):
             serial_column = ""
 
         return """CREATE TABLE "%s" AS (SELECT %s osm_id, %s
-            ST_Simplify(geometry, %f) as geometry from "%s"%s)""" % (
+            ST_SimplifyPreserveTopology(geometry, %f) as geometry from "%s"%s)""" % (
             self.table_name, serial_column, fields, self.mapping.tolerance,
             self.db.to_tablename(self.mapping.origin.name),
             where)
@@ -461,7 +508,6 @@ class PostGISGeneralizedTable(object):
         self.db.drop_table_or_view(cur, self.table_name)
 
         cur.execute(self._stmt())
-        cur.execute(self._idx_stmt())
 
         if self.db.use_geometry_columns_table:
             cur.execute('SELECT * FROM geometry_columns WHERE f_table_name = %s', (self.table_name, ))
@@ -469,6 +515,47 @@ class PostGISGeneralizedTable(object):
                 # drop old entry to handle changes of SRID
                 cur.execute('DELETE FROM geometry_columns WHERE f_table_name = %s', (self.table_name, ))
             cur.execute(self._geom_table_stmt())
+
+class PostGISFixInvalidPolygons(object):
+    """
+    Try to make all polygons valid.
+    ST_SimplifyPreserveTopology (used for the generalized tables) can return invalid
+    geometries but ST_Buffer should be able to fix them.
+    """
+    def __init__(self, db, mapping):
+        self.db = db
+        self.mapping = mapping
+        self.table_name = db.to_tablename(mapping.name)
+
+    def _fetch_invalid_geometries(self):
+        select_invalid = 'SELECT osm_id FROM %s WHERE ST_IsValid(geometry)=False' %(self.table_name,)
+
+        cur = self.db.connection.cursor()
+        cur.execute(select_invalid)
+
+        for row in cur:
+            yield row[0]
+
+    def update(self):
+        if self.mapping.geom_type != 'GEOMETRY':
+            log.info('Validating of polygons only usable for Polygon/GEOMETRY mappings')
+            return
+
+        cur = self.db.connection.cursor()
+
+        # fix geometries one-by-one because ST_buffer can fail an we wouldn't be able to
+        # tell wich geometry caused it to fail
+        for osm_id in self._fetch_invalid_geometries():
+            update = 'UPDATE %s SET geometry = ST_Buffer(geometry,0) WHERE osm_id = %d' % (self.table_name, osm_id)
+            cur.execute('SAVEPOINT polygonfix;')
+            try:
+                cur.execute(update)
+            except psycopg2.DatabaseError, ex:
+                log.warn('Could not fix geometry with osm_id %d. Row will be deleted. Internal error was: %s' % (osm_id, ex))
+                cur.execute('ROLLBACK TO SAVEPOINT polygonfix;')
+                cur.execute('DELETE FROM %s WHERE osm_id = %d' % (self.table_name, osm_id))
+            else:
+                cur.execute('RELEASE SAVEPOINT polygonfix;')
 
 class TrigramIndex(object):
     pass

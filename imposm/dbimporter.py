@@ -1,11 +1,11 @@
 # Copyright 2011, 2012 Omniscale (http://omniscale.com)
-# 
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# 
+#
 #     http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,7 +16,7 @@ from collections import defaultdict
 from multiprocessing import Process
 
 import threading
-from Queue import Queue 
+from Queue import Queue
 
 from imposm.base import OSMElem
 from imposm.geom import IncompletePolygonError
@@ -176,12 +176,12 @@ class DictBasedImporter(ImporterProcess):
 class NodeProcess(ImporterProcess):
     name = 'node'
 
-    def doit(self):        
+    def doit(self):
         while True:
             nodes = self.in_queue.get()
             if nodes is None:
                 break
-            
+
             for node in nodes:
                 mappings = self.mapper.for_nodes(node.tags)
                 if not mappings:
@@ -221,7 +221,7 @@ class WayProcess(ImporterProcess):
                         skip_id = inserted_ways.next()
                     except StopIteration:
                         skip_id = 2**64
-                
+
                 if skip_id == way.osm_id:
                     continue
 
@@ -232,7 +232,7 @@ class WayProcess(ImporterProcess):
                 coords = coords_cache.get_coords(way.refs)
 
                 if not coords:
-                    print 'missing coords for way %s' % (way.osm_id, )
+                    log.debug('missing coords for way %s', way.osm_id)
                     continue
 
                 self.insert(mappings, way.osm_id, coords, way.tags)
@@ -258,7 +258,7 @@ class RelationProcess(ImporterProcess):
             relations = self.in_queue.get()
             if relations is None:
                 break
-            
+
             for relation in relations:
                 builder = RelationBuilder(relation, ways_cache, coords_cache)
                 try:
@@ -270,7 +270,7 @@ class RelationProcess(ImporterProcess):
                 mappings = self.mapper.for_relations(relation.tags)
                 if mappings:
                     inserted = self.insert(mappings, relation.osm_id, relation.geom, relation.tags)
-                    if inserted:
+                    if inserted and any(getattr(m, 'skip_inserted_ways', False) for _, m in mappings):
                         builder.mark_inserted_ways(self.inserted_way_queue)
 
 class RelationProcessDict(RelationProcess, DictBasedImporter):
