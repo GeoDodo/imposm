@@ -103,16 +103,37 @@ class MongoDB(object):
 
     def spatial_fun(self, mapping_names):
         pass
-        # condition = []
-        # for name in mapping_names:
-        #     condition.append(
-        #         "(doc.mapping_names.indexOf('" + name + "') !== -1)")
-        # return ("function(doc) {if (doc.geometry && (" +
-        #         "||".join(condition) + ")) {"
-        #         "delete doc.mapping_names; emit(doc.geometry, doc);}}")
 
     def swap_tables(self, new_prefix, existing_prefix, backup_prefix):
-        raise NotImplementedError()
+        collections_names = self.connection.collection_names()
+        system_collection = 'system.indexes'
+
+        new_tables = False
+        for collection_name in collections_names:
+            if collection_name.startswith(new_prefix):
+                new_tables = True;
+
+        if not new_tables:
+            raise RuntimeError('did not found tables to swap')
+
+        # remove backup tables
+        self.remove_tables(backup_prefix)
+
+        # rename existing to backup
+        existing_tables = []
+        for collection_name in collections_names:
+            if collection_name.startswith(existing_prefix) and not collection_name.startswith((new_prefix, backup_prefix)):
+                existing_tables.append(collection_name)
+
+        for collection_name in existing_tables:
+            rename_to = collection_name.replace(existing_prefix, backup_prefix)
+            self.connection[collection_name].rename(rename_to)
+
+        # rename new to existing
+        for collection_name in collections_names:
+            if collection_name != system_collection and collection_name.startswith(new_prefix):
+                rename_to = collection_name.replace(new_prefix, existing_prefix)
+                self.connection[collection_name].rename(rename_to)
 
 
     def remove_tables(self, prefix):
