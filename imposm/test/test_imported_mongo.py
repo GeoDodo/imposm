@@ -42,7 +42,7 @@ def setup_module():
     os.chdir(temp_dir)
     test_osm_file = os.path.join(os.path.dirname(__file__), 'test.out.osm')
     with capture_out():
-        imposm.app.main(['--read', test_osm_file, '--write', '--database', db_conf.db, 
+        imposm.app.main(['--read', test_osm_file, '--write', '--database', db_conf.db,
             '--host', 'localhost', '--port', 27017,
             '--proj', db_conf.proj, '--table-prefix', db_conf.prefix])
 
@@ -58,7 +58,7 @@ class TestImportedMongoDB(object):
         eq_(result['name'], 'Foo')
         eq_(result['geometry']['type'], 'Point')
         eq_(result['geometry']['coordinates'], [13.0, 47.5])
-        
+
 
     def test_way(self):
         tablename = db_conf.prefix+'landusages'
@@ -75,8 +75,12 @@ class TestImportedMongoDB(object):
         eq_(result['type'], 'wood')
         eq_(result['geometry']['type'], 'Polygon')
         eq_(result['geometry']['coordinates'], [[[24.199999963550454, 48.24999994388526], [24.69999993386594, 49.24999996833526], [25.699999958315942, 48.79999997828753], [25.249999968268213, 47.699999993302015], [24.199999963550454, 48.24999994388526]]])
-        
+
         result = self.db.connection[tablename].find_one({'osm_id': 3001})
+        eq_(result['osm_id'], 3001)
+        eq_(result['name'], 'way 3002')
+        eq_(result['type'], 'park')
+        eq_(result['geometry']['type'], 'Polygon')
 
 
 def teardown_module():
