@@ -65,11 +65,12 @@ class MongoDB(object):
             extra_arg_names = ['osm_id', 'geometry']
             extra_arg_names.extend([n for n, t in mapping.fields])
 
-        insert_dict = []
-        for elem in insert_data[0]:
-            insert_dict.append(elem)
-        dictionary = dict(zip(extra_arg_names, insert_dict))
-        self.connection[tablename].insert(dictionary)
+        for row in insert_data:
+            insert_dict = []
+            for elem in row:
+                insert_dict.append(elem)
+            dictionary = dict(zip(extra_arg_names, insert_dict))
+            self.connection[tablename].insert(dictionary)
 
     def geom_wrapper(self, geom):
         return shapely.geometry.mapping(geom)
