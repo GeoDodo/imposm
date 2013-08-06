@@ -1,11 +1,11 @@
 # Copyright 2012 Omniscale (http://omniscale.com)
-# 
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# 
+#
 #     http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -42,7 +42,7 @@ class MongoDB(object):
         return self.table_prefix + name.lower()
 
     def is_postgis_2(self):
-        pass 
+        pass
 
     @property
     def connection(self):
@@ -60,12 +60,11 @@ class MongoDB(object):
         pass
 
     def insert(self, mapping, insert_data):
-        # insert_stmt = self.insert_stmt(mapping)
         tablename = self.table_prefix + mapping.name
         if mapping.fields:
             extra_arg_names = ['osm_id', 'geometry']
             extra_arg_names.extend([n for n, t in mapping.fields])
-        
+
         insert_dict = []
         for elem in  insert_data[0]:
             insert_dict.append(elem)
@@ -92,14 +91,12 @@ class MongoDB(object):
 
     def create_table(self, mapping):
         tablename = self.to_tablename(mapping.name)
-        
+
         # drop collection
         self.connection[tablename].drop()
 
         # # table in mongodb is collection
         self.connection.create_collection(tablename)
-        # self.create_geometry_column(cur, tablename, mapping)
-        # self.create_field_indices(cur=cur, mapping=mapping, tablename=tablename)
 
     def spatial_fun(self, mapping_names):
         pass
@@ -137,16 +134,17 @@ class MongoDB(object):
 
 
     def remove_tables(self, prefix):
-        collections = self.connection.collection_names()
-        for collection in collections:
-            if collection != 'system.indexes':
-                self.connection[collection].drop()
+        collection_names = self.connection.collection_names()
+        for collection_name in collection_names:
+            if collection_name != 'system.indexes' and collection_name.startswith(prefix):
+                self.connection[collection_name].drop()
 
     def remove_views(self, prefix):
         # no views in mongodb
         pass
 
     def create_views(self, mappings, ignore_errors=False):
+        # no views in mongodb
         pass
 
     def create_generalized_tables(self, mappings):
@@ -154,24 +152,12 @@ class MongoDB(object):
         pass
 
     def postprocess_tables(self, mappings):
-        # mappings = [m for m in mappings.values() if isinstance(m, FixInvalidPolygons)]
-        # for mapping in mappings:
-        #     PostGISFixInvalidPolygons(self, mapping).update()
         pass
 
     def optimize(self, mappings):
-        # mappings = [m for m in mappings.values() if isinstance(m, (GeneralizedTable, Mapping))]
-        # for mapping in mappings:
-        #     table_name = self.to_tablename(mapping.name)
-        #     self.optimize_table(table_name, '%s_geom' % table_name)
-        # self.vacuum()
         raise NotImplementedError()
 
     def optimize_table(self, table_name, idx_name):
-        # cur = self.connection.cursor()
-        # print 'Clustering table %s' % table_name
-        # cur.execute('CLUSTER "%s" ON "%s"' % (idx_name, table_name))
-        # self.connection.commit()
         raise NotImplementedError()
 
     def vacuum(self):
