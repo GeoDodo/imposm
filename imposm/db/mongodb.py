@@ -66,9 +66,8 @@ class MongoDB(object):
             extra_arg_names.extend([n for n, t in mapping.fields])
 
         insert_dict = []
-        for elem in  insert_data[0]:
+        for elem in insert_data[0]:
             insert_dict.append(elem)
-
         dictionary = dict(zip(extra_arg_names, insert_dict))
         self.connection[tablename].insert(dictionary)
 
@@ -136,7 +135,7 @@ class MongoDB(object):
     def remove_tables(self, prefix):
         collection_names = self.connection.collection_names()
         for collection_name in collection_names:
-            if collection_name != 'system.indexes' and collection_name.startswith(prefix):
+            if collection_name.startswith(prefix):
                 self.connection[collection_name].drop()
 
     def remove_views(self, prefix):
