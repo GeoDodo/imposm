@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
-import json
-
 import shapely
 
 import logging
 log = logging.getLogger(__name__)
 
-from imposm import config
 from imposm.mapping import Mapping
 
 from pymongo import MongoClient
@@ -36,7 +32,9 @@ class MongoDB(object):
 
     @property
     def table_prefix(self):
-        return self.db_conf.prefix.rstrip('_') + '_'
+        if self.db_conf.prefix:
+            return self.db_conf.prefix.rstrip('_') + '_'
+        return self.db_conf.prefix
 
     def to_tablename(self, name):
         return self.table_prefix + name.lower()
