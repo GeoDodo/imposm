@@ -96,6 +96,11 @@ class MongoDB(object):
         # # table in mongodb is collection
         self.connection.create_collection(tablename)
 
+        self.connection[tablename].ensure_index('osmid')
+        self.connection[tablename].ensure_index('name')
+        self.connection[tablename].ensure_index([('geometry', '2dsphere')])
+
+
     def spatial_fun(self, mapping_names):
         pass
 
